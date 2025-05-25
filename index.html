@@ -112,11 +112,13 @@
 
         .image-editor {
             margin-bottom: 30px;
+            margin-top: 50px;
             border: 1px solid #ddd;
             border-radius: 8px;
-            overflow: hidden;
+            overflow: visible;
             background: #f9f9f9;
             transition: all 0.3s;
+            position: relative;
         }
 
         .image-editor.selected {
@@ -132,6 +134,12 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            position: absolute;
+            top: -40px;
+            left: 0;
+            right: 0;
+            border-radius: 8px 8px 0 0;
+            z-index: 10;
         }
 
         .editor-controls {
@@ -190,6 +198,7 @@
             background: #000;
             margin: 0 auto;
             cursor: move;
+            border-radius: 8px 8px 0 0;
         }
 
         .crop-image {
@@ -486,8 +495,8 @@
                 container.addEventListener('mousedown', this.startDrag.bind(this));
                 container.addEventListener('wheel', this.handleWheel.bind(this), { passive: false });
                 
-                zoomIn.addEventListener('click', () => this.zoomImage(index, 0.1));
-                zoomOut.addEventListener('click', () => this.zoomImage(index, -0.1));
+                zoomIn.addEventListener('click', () => this.zoomImage(index, 0.01));
+                zoomOut.addEventListener('click', () => this.zoomImage(index, -0.01));
                 reset.addEventListener('click', () => this.resetImage(index));
                 
                 moveButtons.forEach(btn => {
@@ -547,8 +556,13 @@
                 const scaledWidth = imageData.originalWidth * imageData.zoom;
                 const scaledHeight = imageData.originalHeight * imageData.zoom;
                 
-                imageData.offsetX = (this.targetWidth - scaledWidth) / 2;
-                imageData.offsetY = (this.targetHeight - scaledHeight) / 2;
+                let x = (this.targetWidth - scaledWidth) / 2;
+                let y = (this.targetHeight - scaledHeight) / 2;
+                
+                // Apply snap to edge to ensure no black borders
+                const snapPosition = this.snapToEdge(index, x, y);
+                imageData.offsetX = snapPosition.x;
+                imageData.offsetY = snapPosition.y;
                 
                 this.updateImageTransform(index);
                 this.updateZoomDisplay(index);
@@ -559,7 +573,7 @@
                 const index = parseInt(e.currentTarget.dataset.index);
                 
                 // Calculate zoom delta based on wheel direction
-                const delta = e.deltaY > 0 ? -0.1 : 0.1;
+                const delta = e.deltaY > 0 ? -0.03 : 0.03;
                 
                 // Get mouse position relative to container
                 const rect = e.currentTarget.getBoundingClientRect();
@@ -580,11 +594,16 @@
                 
                 const zoomRatio = newZoom / oldZoom;
                 
-                // Adjust offset to zoom towards mouse position
-                imageData.offsetX = mouseX - (mouseX - imageData.offsetX) * zoomRatio;
-                imageData.offsetY = mouseY - (mouseY - imageData.offsetY) * zoomRatio;
+                // Calculate new position
+                let newX = mouseX - (mouseX - imageData.offsetX) * zoomRatio;
+                let newY = mouseY - (mouseY - imageData.offsetY) * zoomRatio;
                 
                 imageData.zoom = newZoom;
+                
+                // Apply snap to edge after zoom
+                const snapPosition = this.snapToEdge(index, newX, newY);
+                imageData.offsetX = snapPosition.x;
+                imageData.offsetY = snapPosition.y;
                 
                 this.updateImageTransform(index);
                 this.updateZoomDisplay(index);
@@ -607,14 +626,70 @@
                 e.currentTarget.style.cursor = 'grabbing';
             }
 
+            snapToEdge(index, x, y) {
+                const imageData = this.images[index];
+                const scaledWidth = imageData.originalWidth * imageData.zoom;
+                const scaledHeight = imageData.originalHeight * imageData.zoom;
+                
+                const snapThreshold = 15; // Pixels from edge to trigger snap
+                
+                // Calculate edges
+                const leftEdge = 0;
+                const rightEdge = this.targetWidth - scaledWidth;
+                const topEdge = 0;
+                const bottomEdge = this.targetHeight - scaledHeight;
+                
+                let snappedX = x;
+                let snappedY = y;
+                
+                // Snap to left/right edges
+                if (Math.abs(x - leftEdge) < snapThreshold && x <= leftEdge) {
+                    snappedX = leftEdge;
+                } else if (Math.abs(x - rightEdge) < snapThreshold && x >= rightEdge) {
+                    snappedX = rightEdge;
+                }
+                
+                // Snap to top/bottom edges
+                if (Math.abs(y - topEdge) < snapThreshold && y <= topEdge) {
+                    snappedY = topEdge;
+                } else if (Math.abs(y - bottomEdge) < snapThreshold && y >= bottomEdge) {
+                    snappedY = bottomEdge;
+                }
+                
+                // Prevent image from being dragged too far (leaving black space)
+                if (scaledWidth >= this.targetWidth) {
+                    // Image is wider than container - don't allow black bars on sides
+                    snappedX = Math.min(0, Math.max(rightEdge, snappedX));
+                } else {
+                    // Image is narrower - keep it within bounds
+                    snappedX = Math.max(0, Math.min(rightEdge, snappedX));
+                }
+                
+                if (scaledHeight >= this.targetHeight) {
+                    // Image is taller than container - don't allow black bars on top/bottom
+                    snappedY = Math.min(0, Math.max(bottomEdge, snappedY));
+                } else {
+                    // Image is shorter - keep it within bounds
+                    snappedY = Math.max(0, Math.min(bottomEdge, snappedY));
+                }
+                
+                return { x: snappedX, y: snappedY };
+            }
+
             handleDrag(e) {
                 if (!this.isDragging) return;
                 
                 const index = this.dragData.index;
                 const imageData = this.images[index];
                 
-                imageData.offsetX = e.clientX - this.dragData.startX;
-                imageData.offsetY = e.clientY - this.dragData.startY;
+                // Calculate new position
+                let newX = e.clientX - this.dragData.startX;
+                let newY = e.clientY - this.dragData.startY;
+                
+                // Apply snap to edge
+                const snapPosition = this.snapToEdge(index, newX, newY);
+                imageData.offsetX = snapPosition.x;
+                imageData.offsetY = snapPosition.y;
                 
                 this.updateImageTransform(index);
             }
